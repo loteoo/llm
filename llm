@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+VERSION="0.0.1"
+
+
+
+# Utils 
+# =================
+tab=$'\t'
+nl=$'\n'
+normal=$'\e[0m'
+bold=$'\e[1m'
+dimmed=$'\e[2m'
+red=$'\e[31m'
+green=$'\e[92m'
+cyan=$'\e[96m'
+
+
+# Helper commands
+# =================
+help() {
+  cat << EOT
+NAME
+  llm - Chat with latest LLMs via your CLI. Powered by duck.ai
+
+SYNOPSIS
+  llm [-m model] [-t template] [prompt]
+
+OPTIONS
+  -m <model>      Choose between one of the available models. Default: gpt4o-mini
+  -t <template>   Use a prompt template. Default: "default"
+  -h              Show this help text
+
+EOT
+  exit "$1";
+}
+
+
+ask() {
+
+  curl -s https://duckduckgo.com/duckchat/v1/chat \
+    -X POST \
+    -H "x-vqd-4: $vqd" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: text/event-stream' \
+    -d "{\"model\": \"gpt-4o-mini\", \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}]}" \
+      | while read -r line; do
+        if [[ $line == "data: {\"message\":"* ]]; then
+          json="${line#data: }"
+          message="$(echo "$json" | jq -r '.message')"
+          echo -n "$message"
+        fi
+      done
+    
+
+  # curl 'https://duckduckgo.com/duckchat/v1/chat' -X POST -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0' -H 'Accept: text/event-stream' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br, zstd' -H 'Referer: https://duckduckgo.com/' -H 'Content-Type: application/json' -H 'x-vqd-4: 4-43882821367195073534211861091966616524' -H 'Origin: https://duckduckgo.com' -H 'Sec-GPC: 1' -H 'Connection: keep-alive' -H 'Cookie: dcm=3; dcs=1' -H 'Sec-Fetch-Dest: empty' -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Site: same-origin' -H 'Priority: u=4' -H 'TE: trailers' --data-raw '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"how long to learn snowboarding"}]}' \
+  #   | sed -n 's/^data: //; /^{/p' \
+  #   | jq -r 'select(.message) | .message' \
+  #   | tr -d '\n'
+
+  # curl -s 'https://duckduckgo.com/duckchat/v1/chat' -X POST -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0' -H 'Accept: text/event-stream' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br, zstd' -H 'Referer: https://duckduckgo.com/' -H 'Content-Type: application/json' -H 'x-vqd-4: 4-43882821367195073534211861091966616524' -H 'Origin: https://duckduckgo.com' -H 'Sec-GPC: 1' -H 'Connection: keep-alive' -H 'Cookie: dcm=3; dcs=1' -H 'Sec-Fetch-Dest: empty' -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Site: same-origin' -H 'Priority: u=4' -H 'TE: trailers' --data-raw '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"how long to learn snowboarding"}]}' \
+  #   | while read -r line; do
+  #     if [[ $line == "data: {"* ]]; then
+  #       json="${line#data: }"
+  #       message="$(echo "$json" | jq -r '.message')"
+  #       echo -n "$message"
+  #     fi
+  #   done
+
+}
+
+model="gpt-4o-mini"
+
+# Parse CLI options
+# ===================
+while getopts "m:t:h" arg; do
+  case $arg in
+    m) model="$OPTARG";;
+    t) template="$OPTARG";;
+    h) help 0;;
+    *) help 1;;
+  esac
+done
+shift $((OPTIND - 1))
+
+# if [[ -z ${1:-} && -t 0 ]]; then
+#   help 1
+# fi
+
+vqd="$(
+  curl -is https://duckduckgo.com/duckchat/v1/status -H 'x-vqd-accept: 1' \
+    | grep 'x-vqd-4' \
+    | cut -w -f2
+)"
+
+if [[ ! -t 0 ]]; then
+  ask "$(cat)"
+  exit
+elif [[ -n ${1:-} ]]; then
+  ask "$@"
+  exit
+else
+
+  while true; do
+    read -p $'\n> ' input
+    ask "$input"
+  done
+
+fi
+
+
+
+
+  
