@@ -1,76 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
-VERSION="0.0.1"
 
+# Constants
+AVAILABLE_MODELS="gpt-4o-mini
+claude-3-haiku-20240307
+meta-llama/Llama-3.3-70B-Instruct-Turbo
+mistralai/Mistral-Small-24B-Instruct-2501
+o3-mini"
 
-
-# Utils 
-# =================
-tab=$'\t'
-nl=$'\n'
-normal=$'\e[0m'
-bold=$'\e[1m'
-dimmed=$'\e[2m'
-red=$'\e[31m'
-green=$'\e[92m'
-cyan=$'\e[96m'
-
+TEMPLATES_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/.llm/templates"
 
 # Helper commands
-# =================
 help() {
   cat << EOT
 NAME
-  llm - Chat with latest LLMs via your CLI. Powered by duck.ai
+  llm - Chat with duck.ai LLMs
 
 SYNOPSIS
-  llm [-m model] [-t template] [prompt]
+  llm [-m model] [-t template] [prompt | - | < file]
 
 OPTIONS
-  -m <model>      Choose between one of the available models. Default: gpt4o-mini
-  -t <template>   Use a prompt template. Default: "default"
+  -m <model>      Choose between one of the available models.
+  -t <template>   Use a prompt template.
   -h              Show this help text
-
 EOT
   exit "$1";
 }
 
-
-ask() {
-
-  curl -s https://duckduckgo.com/duckchat/v1/chat \
-    -X POST \
-    -H "x-vqd-4: $vqd" \
-    -H 'Content-Type: application/json' \
-    -H 'Accept: text/event-stream' \
-    -d "{\"model\": \"gpt-4o-mini\", \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}]}" \
-      | while read -r line; do
-        if [[ $line == "data: {\"message\":"* ]]; then
-          json="${line#data: }"
-          message="$(echo "$json" | jq -r '.message')"
-          echo -n "$message"
-        fi
-      done
-    
-
-  # curl 'https://duckduckgo.com/duckchat/v1/chat' -X POST -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0' -H 'Accept: text/event-stream' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br, zstd' -H 'Referer: https://duckduckgo.com/' -H 'Content-Type: application/json' -H 'x-vqd-4: 4-43882821367195073534211861091966616524' -H 'Origin: https://duckduckgo.com' -H 'Sec-GPC: 1' -H 'Connection: keep-alive' -H 'Cookie: dcm=3; dcs=1' -H 'Sec-Fetch-Dest: empty' -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Site: same-origin' -H 'Priority: u=4' -H 'TE: trailers' --data-raw '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"how long to learn snowboarding"}]}' \
-  #   | sed -n 's/^data: //; /^{/p' \
-  #   | jq -r 'select(.message) | .message' \
-  #   | tr -d '\n'
-
-  # curl -s 'https://duckduckgo.com/duckchat/v1/chat' -X POST -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0' -H 'Accept: text/event-stream' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br, zstd' -H 'Referer: https://duckduckgo.com/' -H 'Content-Type: application/json' -H 'x-vqd-4: 4-43882821367195073534211861091966616524' -H 'Origin: https://duckduckgo.com' -H 'Sec-GPC: 1' -H 'Connection: keep-alive' -H 'Cookie: dcm=3; dcs=1' -H 'Sec-Fetch-Dest: empty' -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Site: same-origin' -H 'Priority: u=4' -H 'TE: trailers' --data-raw '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"how long to learn snowboarding"}]}' \
-  #   | while read -r line; do
-  #     if [[ $line == "data: {"* ]]; then
-  #       json="${line#data: }"
-  #       message="$(echo "$json" | jq -r '.message')"
-  #       echo -n "$message"
-  #     fi
-  #   done
-
+throw() {
+  echo "$@" 1>&2
+  exit 1
 }
 
+# CLI options
 model="gpt-4o-mini"
+template=""
 
 # Parse CLI options
 # ===================
@@ -84,32 +49,104 @@ while getopts "m:t:h" arg; do
 done
 shift $((OPTIND - 1))
 
-# if [[ -z ${1:-} && -t 0 ]]; then
-#   help 1
-# fi
-
-vqd="$(
-  curl -is https://duckduckgo.com/duckchat/v1/status -H 'x-vqd-accept: 1' \
-    | grep 'x-vqd-4' \
-    | cut -w -f2
-)"
-
-if [[ ! -t 0 ]]; then
-  ask "$(cat)"
-  exit
-elif [[ -n ${1:-} ]]; then
-  ask "$@"
-  exit
-else
-
-  while true; do
-    read -p $'\n> ' input
-    ask "$input"
-  done
-
+# Validate CLI options
+if [[ -n "$template" && ! -e "$TEMPLATES_DIR/$template" ]]; then
+  throw "Template \"$template\" does not exist under $TEMPLATES_DIR"
+fi
+if ! echo "$AVAILABLE_MODELS" | grep -qx "$model"; then
+  throw "Model \"$model\" is not available. Available models: $(echo -n "$AVAILABLE_MODELS" | tr '\n' ',')"
 fi
 
+# Execution state
+vqd_file="$(mktemp)"
+messages_file="$(mktemp)"
+last_response_file="$(mktemp)"
+cleanup() {
+  rm "$vqd_file" "$messages_file" "$last_response_file"
+}
+trap cleanup EXIT
 
+ask() {
+  input="$1"
+  if [[ -n "$template" ]]; then
+    # shellcheck disable=SC2059
+    input="$(printf "$(cat "$TEMPLATES_DIR/$template")" "$input")"
+  fi
+  echo "{\"role\": \"user\", \"content\": $(jq -Rn --arg str "$input" '$str')}" >> "$messages_file"
+  if [[ -z "$(cat "$vqd_file")" ]]; then
+    curl -is 'https://duckduckgo.com/duckchat/v1/status' \
+      -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0' \
+      -H 'Accept: */*' \
+      -H 'Accept-Language: en-US,en;q=0.5' \
+      -H 'Accept-Encoding: gzip, deflate, br, zstd' \
+      -H 'Referer: https://duckduckgo.com/' \
+      -H 'Cache-Control: no-store' \
+      -H 'x-vqd-accept: 1' \
+      -H 'Sec-GPC: 1' \
+      -H 'Connection: keep-alive' \
+      -H 'Cookie: dcm=3; dcs=1; 5=1' \
+      -H 'Sec-Fetch-Dest: empty' \
+      -H 'Sec-Fetch-Mode: cors' \
+      -H 'Sec-Fetch-Site: same-origin' \
+      -H 'Priority: u=4' \
+      -H 'TE: trailers' \
+      | grep 'x-vqd-4' \
+      | cut -w -f2 \
+      > "$vqd_file"
+  fi
+  msg_payload="$(tr $'\n' ',' < "$messages_file")"
+  msg_payload="${msg_payload%,}"
+  curl -is 'https://duckduckgo.com/duckchat/v1/chat' -X POST \
+    -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0' \
+    -H 'Accept: text/event-stream' \
+    -H 'Accept-Language: en-US,en;q=0.5' \
+    -H 'Accept-Encoding: gzip, deflate, br, zstd' \
+    -H 'Referer: https://duckduckgo.com/' \
+    -H 'Content-Type: application/json' \
+    -H "X-Vqd-4: $(cat "$vqd_file")" \
+    -H 'Origin: https://duckduckgo.com' \
+    -H 'Sec-GPC: 1' \
+    -H 'Connection: keep-alive' \
+    -H 'Cookie: dcm=3; dcs=1; 5=1' \
+    -H 'Sec-Fetch-Dest: empty' \
+    -H 'Sec-Fetch-Mode: cors' \
+    -H 'Sec-Fetch-Site: same-origin' \
+    -H 'Priority: u=4' \
+    -H 'TE: trailers' \
+    --data-raw "{\"model\":\"gpt-4o-mini\",\"messages\":[$msg_payload]}" \
+    | while read -r line; do
+      if [[ "$line" == "x-vqd-4: "* ]]; then
+        echo "${line#x-vqd-4: }" > "$vqd_file"
+      fi
+      if [[ "$line" == "data: "* &&  "$line" == *"\"message\""* ]]; then
+        message="$(
+          echo "${line#data: }" | \
+          jq '.message' \
+          | sed 's/\\"/"/g' \
+          | sed 's/\\\\/\\/g'
+        )"
+        message="${message#\"}"
+        message="${message%\"}"
+        echo -en "$message"
+      fi
+    done \
+    | tee "$last_response_file"
+  echo "{\"role\": \"assistant\", \"content\": $(jq -Rn --arg str "$(cat "$last_response_file")" '$str')}" >> "$messages_file"
+  echo
+}
 
-
-  
+# Run via stdin, arg or repl
+# ==========================
+if [[ ! -t 0 ]]; then
+  ask "$(cat)"
+elif [[ -n ${1:-} ]]; then
+  ask "$*"
+else
+  clear
+  while true; do
+    read -rp '> ' input
+    echo
+    ask "$input"
+    echo
+  done
+fi
