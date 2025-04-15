@@ -10,7 +10,9 @@ Available models:
 - **Mistral Small 3**: mistralai/Mistral-Small-24B-Instruct-2501
 - **o3-mini**: o3-mini
 
-https://github.com/user-attachments/assets/4e359145-0e5a-4ed8-ba8d-bf06296fcb03
+<video width="576" height="432" controls>
+  <source src="https://github.com/user-attachments/assets/4e359145-0e5a-4ed8-ba8d-bf06296fcb03" type="video/mp4">
+</video>
 
 ## Installation
 
